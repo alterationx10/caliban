@@ -1,10 +1,17 @@
 package caliban.interop.zio
 
+import caliban.CalibanError.ExecutionError
 import caliban._
 import caliban.Value.{ BooleanValue, EnumValue, FloatValue, IntValue, NullValue, StringValue }
+import caliban.introspection.adt.__Type
 import caliban.parsing.adt.LocationInfo
-import zio.Chunk
+import caliban.schema.Step.{ PureStep, QueryStep }
+import caliban.schema.Types.makeScalar
+import caliban.schema.{ ArgBuilder, Schema, Step }
+import zio.{ Chunk, ZIO }
+import zio.json.ast.Json
 import zio.json.{ JsonDecoder, JsonEncoder }
+import zio.query.ZQuery
 
 import scala.annotation.switch
 
@@ -20,6 +27,22 @@ private[caliban] object IsZIOJsonEncoder {
 private[caliban] trait IsZIOJsonDecoder[F[_]]
 private[caliban] object IsZIOJsonDecoder {
   implicit val isZIOJsonDecoder: IsZIOJsonDecoder[JsonDecoder] = null
+}
+
+object json {
+  implicit val jsonSchema: Schema[Any, Json]    = new Schema[Any, Json] {
+    override def toType(isInput: Boolean, isSubscription: Boolean): __Type = makeScalar("Json")
+    override def resolve(value: Json): Step[Any]                           =
+      QueryStep(
+        ZQuery.fromZIO(
+          ZIO
+            .fromEither(JsonDecoder[ResponseValue].fromJsonAST(value).left.map(msg => ExecutionError(msg)))
+            .map(PureStep.apply)
+        )
+      )
+  }
+  implicit val jsonArgBuilder: ArgBuilder[Json] =
+    (input: InputValue) => JsonEncoder[InputValue].toJsonAST(input).left.map(msg => ExecutionError(msg))
 }
 
 /**
